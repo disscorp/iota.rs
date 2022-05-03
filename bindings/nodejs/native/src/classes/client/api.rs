@@ -7,7 +7,7 @@ use super::MessageDto;
 
 use crate::classes::client::dto::{AddressBalanceDto, MessageWrapper, OutputMetadataDto};
 use iota_client::{
-    api::PreparedTransactionData,
+    api::{PreparedTransactionData, ExternalSigner},
     bee_message::prelude::{Address, MessageBuilder, MessageId, Parents, Payload, TransactionId, UtxoInput},
     bee_rest_api::types::dtos::{AddressDto, MessageDto as BeeMessageDto, OutputDto as BeeOutput},
     common::packable::Packable,
@@ -43,8 +43,9 @@ pub(crate) enum Api {
     },
     SignTransaction {
         transaction_data: PreparedTransactionData,
-        seed: Seed,
+        seed: Option<Seed>,
         inputs_range: Option<Range<usize>>,
+        external_signer: Option<ExternalSigner>
     },
     FinishMessage {
         payload: Payload,
@@ -229,10 +230,11 @@ impl Task for ClientTask {
                     transaction_data,
                     seed,
                     inputs_range,
+                    external_signer,
                 } => {
                     let signed_transaction_payload = client
                         .message()
-                        .sign_transaction(transaction_data.clone(), Some(seed), inputs_range.clone())
+                        .sign_transaction(transaction_data.clone(), seed, inputs_range.clone(), external_signer)
                         .await?;
                     serde_json::to_string(&signed_transaction_payload)?
                 }

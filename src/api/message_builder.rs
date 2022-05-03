@@ -11,7 +11,7 @@ use bee_rest_api::types::{
     dtos::{AddressDto, OutputDto},
     responses::OutputResponse,
 };
-use crypto::keys::slip10::{Chain, Curve, Seed};
+use crypto::keys::slip10::{Chain, Curve, Seed, Segment};
 #[cfg(feature = "wasm")]
 use gloo_timers::future::TimeoutFuture;
 #[cfg(not(feature = "wasm"))]
@@ -79,6 +79,18 @@ pub struct ClientMessageBuilder<'a> {
     index: Option<Box<[u8]>>,
     data: Option<Vec<u8>>,
     parents: Option<Vec<MessageId>>,
+}
+
+/// Trait for external signer
+pub trait ExternalSigner {
+    /// Gets ed25519 public key
+    fn public_key(&self) -> [u8; 32];
+
+    /// Signs with ed25519 private key
+    fn sign(&self, message: &[u8]) -> [u8; 64];
+
+    /// Derives key 
+    fn derive(&self, index: u32);
 }
 
 impl<'a> ClientMessageBuilder<'a> {
@@ -196,7 +208,7 @@ impl<'a> ClientMessageBuilder<'a> {
             }
             // Send message with transaction
             let prepared_transaction_data = self.prepare_transaction().await?;
-            let tx_payload = self.sign_transaction(prepared_transaction_data, None, None).await?;
+            let tx_payload = self.sign_transaction(prepared_transaction_data, None, None, None).await?;
             self.finish_message(Some(tx_payload)).await
         } else if self.index.is_some() {
             // Send message with indexation payload
@@ -578,6 +590,7 @@ impl<'a> ClientMessageBuilder<'a> {
         prepared_transaction_data: PreparedTransactionData,
         seed: Option<&'a Seed>,
         inputs_range: Option<Range<usize>>,
+        external_signer: Option<&dyn ExternalSigner>
     ) -> Result<Payload> {
         let essence = prepared_transaction_data.essence;
         let mut address_index_recorders = prepared_transaction_data.address_index_recorders;
@@ -614,20 +627,38 @@ impl<'a> ClientMessageBuilder<'a> {
             if let Some(block_index) = signature_indexes.get(&index) {
                 unlock_blocks.push(UnlockBlock::Reference(ReferenceUnlock::new(*block_index as u16)?));
             } else {
-                // If not, we need to create a signature unlock block
-                let private_key = seed
-                    .or(self.seed)
-                    .ok_or(crate::Error::MissingParameter("Seed"))?
-                    .derive(Curve::Ed25519, &recorder.chain)?
-                    .secret_key();
-                let public_key = private_key.public_key().to_bytes();
-                // The signature unlock block needs to sign the hash of the entire transaction essence of the
-                // transaction payload
-                let signature = Box::new(private_key.sign(&hashed_essence).to_bytes());
-                unlock_blocks.push(UnlockBlock::Signature(SignatureUnlock::Ed25519(Ed25519Signature::new(
-                    public_key, *signature,
-                ))));
-                signature_indexes.insert(index, current_block_index);
+                /// todo(WIP)
+                if let Some(signer) = external_signer.clone() {
+                    // If not, we need to create a signature unlock block
+                    let segments: Vec<Segment> = recorder.chain.segments();
+                    for segment in segments.iter() {
+                        signer.derive(u32::from_be_bytes(segment.bs()));
+                    }
+                    let public_key = signer.public_key();
+                    let signature = Box::new(signer.sign(&hashed_essence));
+                    // The signature unlock block needs to sign the hash of the entire transaction essence of the
+                    // transaction payload
+                    unlock_blocks.push(UnlockBlock::Signature(SignatureUnlock::Ed25519(Ed25519Signature::new(
+                        public_key, *signature,
+                    ))));
+                    signature_indexes.insert(index, current_block_index);
+                }else{
+                    // If not, we need to create a signature unlock block
+                    let private_key = seed
+                        .or(self.seed)
+                        .ok_or(crate::Error::MissingParameter("Seed"))?
+                        .derive(Curve::Ed25519, &recorder.chain)?
+                        .secret_key();
+                    let public_key = private_key.public_key().to_bytes();
+                    // The signature unlock block needs to sign the hash of the entire transaction essence of the
+                    // transaction payload
+                    let signature = Box::new(private_key.sign(&hashed_essence).to_bytes());
+                    unlock_blocks.push(UnlockBlock::Signature(SignatureUnlock::Ed25519(Ed25519Signature::new(
+                        public_key, *signature,
+                    ))));
+                    signature_indexes.insert(index, current_block_index);
+                }
+                
             }
         }
 
