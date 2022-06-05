@@ -1,10 +1,14 @@
 // Copyright 2021 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
+use crypto::keys::slip10::Segment;
+
 use iota_client::{
     api::PreparedTransactionData,
+    api::ExternalSigner,
     bee_message::prelude::{Address, MessageId, Payload, UtxoInput},
     Seed,
+    Result,
 };
 use neon::prelude::*;
 
@@ -25,6 +29,42 @@ pub struct MessageSender {
     outputs: Vec<(Address, u64)>,
     dust_allowance_outputs: Vec<(Address, u64)>,
 }
+
+use std::cell::{RefCell, RefMut};
+
+struct JsExternalSigner<'a> {
+    cx: FunctionContext<'a>,
+}
+
+impl<'a> ExternalSigner for JsExternalSigner<'static> {
+
+    fn public_key(&mut self) -> Result<[u8; 32]> {
+        let object: Handle<JsObject> = self.cx.argument::<JsObject>(0).unwrap();
+        let public_key_handler: Handle<JsValue> = object.get(&mut self.cx, "public_key").unwrap();
+        let get_publickey: Handle<JsFunction> = public_key_handler.downcast_or_throw::<JsFunction, _>(&mut self.cx).unwrap();
+        let get_publickey_result: Handle<JsValue> = get_publickey.call::<FunctionContext, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut self.cx, object, vec![]).unwrap();
+        let result_jsarray: Handle<JsArray> = get_publickey_result.downcast_or_throw::<JsArray, _>(&mut self.cx).unwrap();
+        let public_key: Vec<Handle<JsValue>> = result_jsarray.to_vec(&mut self.cx).unwrap();
+        let slice: &mut [u8; 32] = &mut [0 as u8;32];
+        for (i, jsValue) in public_key.iter().enumerate() {
+            let jsByte: Handle<JsNumber> = jsValue.downcast_or_throw::<JsNumber, _>(&mut self.cx).unwrap();
+            let byte: u8 = jsByte.value() as u8;
+            slice[i] = byte + 1;
+        }
+        Ok(*slice)
+    }
+
+    fn sign(&mut self, message: &[u8]) -> [u8; 64] {
+        return [0; 64];
+    }
+
+    fn derive(&mut self, segment: u32) {
+
+    }
+
+}
+
+unsafe impl<'a> Send for JsExternalSigner<'static> {}
 
 declare_types! {
     pub class JsMessageSender for MessageSender {
@@ -195,7 +235,7 @@ declare_types! {
             Ok(cx.this().upcast())
         }
 
-        method prepareTransaction(mut cx){
+        method prepareTransaction(mut cx) {
             let cb = cx.argument::<JsFunction>(0)?;
             {
                 let this = cx.this();
@@ -255,7 +295,53 @@ declare_types! {
                     client_id: ref_.client_id.clone(),
                     api: Api::SignTransaction {
                         transaction_data,
-                        seed,
+                        seed: Some(seed),
+                        inputs_range,
+                    },
+                };
+                client_task.schedule(cb);
+            }
+
+            Ok(cx.undefined().upcast())
+        }
+
+        method externalSignTransaction(mut cx){
+            let transaction_data_string = cx.argument::<JsString>(0)?.value();
+            let transaction_data: PreparedTransactionData = serde_json::from_str(&transaction_data_string).expect("invalid prepared transaction data");
+            
+            let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1).unwrap();
+            
+
+            let inputs_range  = if cx.len() > 4 {
+                let start: Option<usize> = match cx.argument_opt(2) {
+                    Some(arg) => {
+                        Some(arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as usize)
+                    },
+                    None => None,
+                };
+                let end: Option<usize> = match cx.argument_opt(3) {
+                    Some(arg) => {
+                        Some(arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as usize)
+                    },
+                    None => None,
+                };
+                if start.is_some() && end.is_some() {
+                    //save to unwrap since we checked if they are some
+                    Some(start.expect("no start index")..end.expect("no end index"))
+                }else{None}
+            }else{None};
+
+            let cb = cx.argument::<JsFunction>(cx.len()-1)?;
+            let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> = None;
+            {
+                let this = cx.this();
+                let guard = cx.lock();
+                let ref_ = &(*this.borrow(&guard));
+                let client_task = ClientTask {
+                    client_id: ref_.client_id.clone(),
+                    api: Api::ExternalSignTransaction {
+                        transaction_data,
+                        external_signer,
                         inputs_range,
                     },
                 };

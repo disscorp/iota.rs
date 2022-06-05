@@ -15,6 +15,8 @@ use iota_client::{
 };
 use neon::prelude::*;
 
+use std::cell::{RefCell, RefMut};
+
 pub(crate) enum Api {
     // High level APIs
     Send {
@@ -45,7 +47,11 @@ pub(crate) enum Api {
         transaction_data: PreparedTransactionData,
         seed: Option<Seed>,
         inputs_range: Option<Range<usize>>,
-        external_signer: Option<ExternalSigner>
+    },
+    ExternalSignTransaction {
+        transaction_data: PreparedTransactionData,
+        external_signer: Option<RefCell<Box<dyn ExternalSigner>>>,
+        inputs_range: Option<Range<usize>>,
     },
     FinishMessage {
         payload: Payload,
@@ -230,11 +236,23 @@ impl Task for ClientTask {
                     transaction_data,
                     seed,
                     inputs_range,
-                    external_signer,
                 } => {
+                    let mut external_signer = None;
+                    let signed_transaction_payload = client
+                    .message()
+                    .sign_transaction(transaction_data.clone(), seed.as_ref(), inputs_range.clone(), &mut external_signer)
+                    .await?;
+                    serde_json::to_string(&signed_transaction_payload)?
+                }
+                Api::ExternalSignTransaction {
+                    transaction_data,
+                    external_signer,
+                    inputs_range,
+                } => {
+                    //external_signer = external_signer.as_ref().as_mut();
                     let signed_transaction_payload = client
                         .message()
-                        .sign_transaction(transaction_data.clone(), seed, inputs_range.clone(), external_signer)
+                        .sign_transaction(transaction_data.clone(), None, inputs_range.clone(), external_signer)
                         .await?;
                     serde_json::to_string(&signed_transaction_payload)?
                 }

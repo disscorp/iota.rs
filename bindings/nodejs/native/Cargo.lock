@@ -294,6 +294,7 @@ dependencies = [
  "futures",
  "hex",
  "iota-client",
+ "iota-crypto",
  "neon",
  "neon-build 0.5.3",
  "once_cell",

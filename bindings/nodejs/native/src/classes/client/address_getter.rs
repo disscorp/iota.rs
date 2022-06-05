@@ -99,6 +99,7 @@ declare_types! {
                     },
                 };
                 client_task.schedule(cb);
+                
             }
 
             Ok(cx.undefined().upcast())
