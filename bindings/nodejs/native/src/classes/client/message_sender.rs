@@ -33,21 +33,21 @@ pub struct MessageSender {
 use std::cell::{RefCell, RefMut};
 
 struct JsExternalSigner<'a> {
-    cx: FunctionContext<'a>,
+    cx: &'a mut CallContext<'a, JsMessageSender>,
 }
 
 impl<'a> ExternalSigner for JsExternalSigner<'a> {
 
     fn public_key(&mut self) -> Result<[u8; 32]> {
         let object: Handle<JsObject> = self.cx.argument::<JsObject>(0).unwrap();
-        let public_key_handler: Handle<JsValue> = object.get(&mut self.cx, "public_key").unwrap();
-        let get_publickey: Handle<JsFunction> = public_key_handler.downcast_or_throw::<JsFunction, _>(&mut self.cx).unwrap();
-        let get_publickey_result: Handle<JsValue> = get_publickey.call::<FunctionContext, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut self.cx, object, vec![]).unwrap();
-        let result_jsarray: Handle<JsArray> = get_publickey_result.downcast_or_throw::<JsArray, _>(&mut self.cx).unwrap();
-        let public_key: Vec<Handle<JsValue>> = result_jsarray.to_vec(&mut self.cx).unwrap();
+        let public_key_handler: Handle<JsValue> = object.get(self.cx, "public_key").unwrap();
+        let get_publickey: Handle<JsFunction> = public_key_handler.downcast_or_throw::<JsFunction, _>(self.cx).unwrap();
+        let get_publickey_result: Handle<JsValue> = get_publickey.call::<CallContext<'a, JsMessageSender>, JsObject, JsObject, Vec<Handle<JsObject>>>(self.cx, object, vec![]).unwrap();
+        let result_jsarray: Handle<JsArray> = get_publickey_result.downcast_or_throw::<JsArray, _>(self.cx).unwrap();
+        let public_key: Vec<Handle<JsValue>> = result_jsarray.to_vec(self.cx).unwrap();
         let slice: &mut [u8; 32] = &mut [0 as u8;32];
         for (i, jsValue) in public_key.iter().enumerate() {
-            let jsByte: Handle<JsNumber> = jsValue.downcast_or_throw::<JsNumber, _>(&mut self.cx).unwrap();
+            let jsByte: Handle<JsNumber> = jsValue.downcast_or_throw::<JsNumber, _>(self.cx).unwrap();
             let byte: u8 = jsByte.value() as u8;
             slice[i] = byte + 1;
         }
@@ -305,15 +305,22 @@ declare_types! {
             Ok(cx.undefined().upcast())
         }
 
-        method externalSignTransaction(mut cx){
+        method externalSignTransaction(mut cx: CallContext<'static, JsMessageSender>){
             let transaction_data_string = cx.argument::<JsString>(0)?.value();
             let transaction_data: PreparedTransactionData = serde_json::from_str(&transaction_data_string).expect("invalid prepared transaction data");
             
             //let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1).unwrap();
             
-            let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> = Some(RefCell::new(Box::new(JsExternalSigner::<'static> {
-                cx
-            })));
+            let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> 
+                = Some(
+                    RefCell::new(
+                        Box::new(
+                            JsExternalSigner::<'static> {
+                                cx: &mut cx
+                            }
+                        )
+                    )
+                );
 
 
             let inputs_range  = if cx.len() > 4 {
