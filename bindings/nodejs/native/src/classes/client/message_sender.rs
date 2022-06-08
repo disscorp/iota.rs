@@ -36,7 +36,7 @@ struct JsExternalSigner<'a> {
     cx: FunctionContext<'a>,
 }
 
-impl<'a> ExternalSigner for JsExternalSigner<'static> {
+impl<'a> ExternalSigner for JsExternalSigner<'a> {
 
     fn public_key(&mut self) -> Result<[u8; 32]> {
         let object: Handle<JsObject> = self.cx.argument::<JsObject>(0).unwrap();
@@ -59,12 +59,12 @@ impl<'a> ExternalSigner for JsExternalSigner<'static> {
     }
 
     fn derive(&mut self, segment: u32) {
-
+        
     }
 
 }
 
-unsafe impl<'a> Send for JsExternalSigner<'static> {}
+unsafe impl<'a> Send for JsExternalSigner<'a> {}
 
 declare_types! {
     pub class JsMessageSender for MessageSender {
@@ -309,8 +309,12 @@ declare_types! {
             let transaction_data_string = cx.argument::<JsString>(0)?.value();
             let transaction_data: PreparedTransactionData = serde_json::from_str(&transaction_data_string).expect("invalid prepared transaction data");
             
-            let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1).unwrap();
+            //let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1).unwrap();
             
+            let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> = Some(RefCell::new(Box::new(JsExternalSigner::<'static> {
+                cx
+            })));
+
 
             let inputs_range  = if cx.len() > 4 {
                 let start: Option<usize> = match cx.argument_opt(2) {
@@ -332,7 +336,7 @@ declare_types! {
             }else{None};
 
             let cb = cx.argument::<JsFunction>(cx.len()-1)?;
-            let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> = None;
+            //let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> = None;
             {
                 let this = cx.this();
                 let guard = cx.lock();
