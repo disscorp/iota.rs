@@ -46,16 +46,22 @@ export declare class ClientBuilder {
   build(): Client
 }
 
-export declare interface ExternalSigner {
+export declare interface ExternalSigner<T> {
+  key: Uint8Array;
   /// Gets ed25519 public key
   public_key(): Uint8Array;
 
   /// Signs with ed25519 private key
   sign(message: Uint8Array): Uint8Array;
 
-  /// Derives key 
-  derive(index: number): void;
+  /// Derives key
+  derive(chain: Chain): T;
 }
+type Chain = Array<Segment>;
+type Segment = {
+  hardened: boolean,
+  bs: Uint8Array
+};
 
 export declare class MessageSender {
   seed(seed: string): MessageSender

@@ -7,15 +7,13 @@ use super::MessageDto;
 
 use crate::classes::client::dto::{AddressBalanceDto, MessageWrapper, OutputMetadataDto};
 use iota_client::{
-    api::{PreparedTransactionData, ExternalSigner},
+    api::PreparedTransactionData,
     bee_message::prelude::{Address, MessageBuilder, MessageId, Parents, Payload, TransactionId, UtxoInput},
     bee_rest_api::types::dtos::{AddressDto, MessageDto as BeeMessageDto, OutputDto as BeeOutput},
     common::packable::Packable,
     AddressOutputsOptions, ClientMiner, Seed,
 };
 use neon::prelude::*;
-
-use std::cell::{RefCell, RefMut};
 
 pub(crate) enum Api {
     // High level APIs
@@ -45,13 +43,11 @@ pub(crate) enum Api {
     },
     SignTransaction {
         transaction_data: PreparedTransactionData,
-        seed: Option<Seed>,
+        seed: Seed,
         inputs_range: Option<Range<usize>>,
     },
-    ExternalSignTransaction {
-        transaction_data: PreparedTransactionData,
-        external_signer: Option<RefCell<Box<dyn ExternalSigner>>>,
-        inputs_range: Option<Range<usize>>,
+    FinishExternalSignTransaction {
+        payload: Payload
     },
     FinishMessage {
         payload: Payload,
@@ -237,22 +233,9 @@ impl Task for ClientTask {
                     seed,
                     inputs_range,
                 } => {
-                    let mut external_signer = None;
-                    let signed_transaction_payload = client
-                    .message()
-                    .sign_transaction(transaction_data.clone(), seed.as_ref(), inputs_range.clone(), &mut external_signer)
-                    .await?;
-                    serde_json::to_string(&signed_transaction_payload)?
-                }
-                Api::ExternalSignTransaction {
-                    transaction_data,
-                    external_signer,
-                    inputs_range,
-                } => {
-                    //external_signer = external_signer.as_ref().as_mut();
                     let signed_transaction_payload = client
                         .message()
-                        .sign_transaction(transaction_data.clone(), None, inputs_range.clone(), external_signer)
+                        .sign_transaction(transaction_data.clone(), Some(seed), inputs_range.clone())
                         .await?;
                     serde_json::to_string(&signed_transaction_payload)?
                 }
@@ -262,6 +245,9 @@ impl Task for ClientTask {
                         message_id: message.id().0,
                         message: BeeMessageDto::from(&message),
                     })?
+                }
+                Api::FinishExternalSignTransaction { payload } => {
+                    serde_json::to_string(&payload)?
                 }
                 Api::GetUnspentAddress {
                     seed,

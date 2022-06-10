@@ -1,20 +1,16 @@
 // Copyright 2021 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use crypto::keys::slip10::Segment;
-
 use iota_client::{
     api::PreparedTransactionData,
-    api::ExternalSigner,
-    bee_message::prelude::{Address, MessageId, Payload, UtxoInput},
+    bee_message::prelude::{Address, MessageId, Payload, UtxoInput, UnlockBlock, ReferenceUnlock, SignatureUnlock, Ed25519Signature, UnlockBlocks, TransactionPayloadBuilder},
     Seed,
-    Result,
 };
 use neon::prelude::*;
 
 use super::{parse_address, Api, ClientTask};
 
-use std::{ops::Range, str::FromStr};
+use std::{ops::Range, str::FromStr, collections::{HashMap}};
 
 pub struct MessageSender {
     client_id: String,
@@ -29,42 +25,6 @@ pub struct MessageSender {
     outputs: Vec<(Address, u64)>,
     dust_allowance_outputs: Vec<(Address, u64)>,
 }
-
-use std::cell::{RefCell, RefMut};
-
-struct JsExternalSigner<'a> {
-    cx: &'a mut CallContext<'a, JsMessageSender>,
-}
-
-impl<'a> ExternalSigner for JsExternalSigner<'a> {
-
-    fn public_key(&mut self) -> Result<[u8; 32]> {
-        let object: Handle<JsObject> = self.cx.argument::<JsObject>(0).unwrap();
-        let public_key_handler: Handle<JsValue> = object.get(self.cx, "public_key").unwrap();
-        let get_publickey: Handle<JsFunction> = public_key_handler.downcast_or_throw::<JsFunction, _>(self.cx).unwrap();
-        let get_publickey_result: Handle<JsValue> = get_publickey.call::<CallContext<'a, JsMessageSender>, JsObject, JsObject, Vec<Handle<JsObject>>>(self.cx, object, vec![]).unwrap();
-        let result_jsarray: Handle<JsArray> = get_publickey_result.downcast_or_throw::<JsArray, _>(self.cx).unwrap();
-        let public_key: Vec<Handle<JsValue>> = result_jsarray.to_vec(self.cx).unwrap();
-        let slice: &mut [u8; 32] = &mut [0 as u8;32];
-        for (i, jsValue) in public_key.iter().enumerate() {
-            let jsByte: Handle<JsNumber> = jsValue.downcast_or_throw::<JsNumber, _>(self.cx).unwrap();
-            let byte: u8 = jsByte.value() as u8;
-            slice[i] = byte + 1;
-        }
-        Ok(*slice)
-    }
-
-    fn sign(&mut self, message: &[u8]) -> [u8; 64] {
-        return [0; 64];
-    }
-
-    fn derive(&mut self, segment: u32) {
-        
-    }
-
-}
-
-unsafe impl<'a> Send for JsExternalSigner<'a> {}
 
 declare_types! {
     pub class JsMessageSender for MessageSender {
@@ -235,7 +195,7 @@ declare_types! {
             Ok(cx.this().upcast())
         }
 
-        method prepareTransaction(mut cx) {
+        method prepareTransaction(mut cx){
             let cb = cx.argument::<JsFunction>(0)?;
             {
                 let this = cx.this();
@@ -295,7 +255,7 @@ declare_types! {
                     client_id: ref_.client_id.clone(),
                     api: Api::SignTransaction {
                         transaction_data,
-                        seed: Some(seed),
+                        seed,
                         inputs_range,
                     },
                 };
@@ -305,25 +265,11 @@ declare_types! {
             Ok(cx.undefined().upcast())
         }
 
-        method externalSignTransaction(mut cx: CallContext<'static, JsMessageSender>){
+        method externalSignTransaction(mut cx){
             let transaction_data_string = cx.argument::<JsString>(0)?.value();
             let transaction_data: PreparedTransactionData = serde_json::from_str(&transaction_data_string).expect("invalid prepared transaction data");
-            
-            //let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1).unwrap();
-            
-            let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> 
-                = Some(
-                    RefCell::new(
-                        Box::new(
-                            JsExternalSigner::<'static> {
-                                cx: &mut cx
-                            }
-                        )
-                    )
-                );
 
-
-            let inputs_range  = if cx.len() > 4 {
+            let inputs_range = if cx.len() > 4 {
                 let start: Option<usize> = match cx.argument_opt(2) {
                     Some(arg) => {
                         Some(arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as usize)
@@ -342,24 +288,148 @@ declare_types! {
                 }else{None}
             }else{None};
 
+            let essence = transaction_data.essence;
+            let mut address_index_recorders = transaction_data.address_index_recorders;
+            let hashed_essence = essence.hash();
+            let mut unlock_blocks = Vec::new();
+            let mut signature_indexes = HashMap::<String, usize>::new();
+            address_index_recorders.sort_by(|a, b| a.input.cmp(&b.input));
+
+            let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1)?;
+
+            let jsvalue_publickey: Handle<JsValue> = external_signer.get(&mut cx, "public_key").unwrap();
+            let jsfn_publickey: Handle<JsFunction> = jsvalue_publickey.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+            let jsvalue_publickey: Handle<JsValue> = jsfn_publickey.call::<CallContext<_>, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut cx, external_signer, vec![])?;
+            let jsbuffer_publickey: Handle<JsBuffer> = jsvalue_publickey.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
+            let slice_publickey: &[u8] = cx.borrow(&jsbuffer_publickey, |data: neon::borrow::Ref<neon::types::BinaryData>| {
+                data.as_slice::<u8>()
+            });
+            let public_key: [u8; 32] = slice_publickey.try_into().unwrap();
+
+            for (current_block_index, mut recorder) in address_index_recorders.into_iter().enumerate() {
+                // Check if current path is same as previous path
+                // If so, add a reference unlock block
+                // Format to differentiate between public and internal addresses
+                let index = format!("{}{}", recorder.address_index, recorder.internal);
+                if let Some(block_index) = signature_indexes.get(&index) {
+                    unlock_blocks.push(UnlockBlock::Reference(ReferenceUnlock::new(*block_index as u16).unwrap()));
+                } else {
+                    // If not, we need to create a signature unlock block
+                    let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1)?;
+                    let jsvalue_derive: Handle<JsValue> = external_signer.get(&mut cx, "derive").unwrap();
+                    let jsfn_derive: Handle<JsFunction> = jsvalue_derive.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                    let jsarray_chain: Handle<JsArray> = cx.empty_array();
+
+                    let mut i = 0;
+                    for segment in &recorder.chain.segments() {
+                        let bs = segment.bs();
+                        let uint8_ctor = cx.global()
+                            .get(&mut cx, "Uint8Array")?
+                            .downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                    
+                        let mut buf = cx.array_buffer(bs.len().try_into().unwrap())?;
+                    
+                        cx.borrow_mut(&mut buf, |buf| {
+                            buf.as_mut_slice::<u8>().copy_from_slice(&bs);
+                        });
+                    
+                        let jsobject_bs: Handle<JsObject> = uint8_ctor.construct(&mut cx, [buf])?;
+                        let jsbool_hardened: Handle<JsBoolean> = cx.boolean(segment.hardened());
+
+                        let jsobject_segment: Handle<JsObject> = cx.empty_object();
+                        jsobject_segment.set(&mut cx, "hardened", jsbool_hardened)?;
+                        jsobject_segment.set(&mut cx, "bs", jsobject_bs)?;
+
+                        jsarray_chain.set(&mut cx, i, jsobject_segment)?;
+
+                        i = i + 1;
+                    }
+
+                    let external_signer: Handle<JsObject> = jsfn_derive.call(&mut cx, external_signer, vec!(jsarray_chain))?
+                        .downcast_or_throw::<JsObject, _>(&mut cx)?;
+
+
+                    let jsvalue_sign: Handle<JsValue> = external_signer.get(&mut cx, "sign").unwrap();
+                    let jsfn_sign: Handle<JsFunction> = jsvalue_sign.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                    
+                    let uint8_ctor = cx.global()
+                        .get(&mut cx, "Uint8Array")?
+                        .downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                    let mut buf = cx.array_buffer(hashed_essence.len().try_into().unwrap())?;
+                    cx.borrow_mut(&mut buf, |buf| {
+                        buf.as_mut_slice::<u8>().copy_from_slice(&hashed_essence);
+                    });
+                    let jsobject_hashedessence: Handle<JsObject> = uint8_ctor.construct(&mut cx, [buf])?;
+
+                    let jsbuffer_signature: Handle<JsBuffer> = jsfn_sign.call(&mut cx, external_signer, vec!(jsobject_hashedessence))?
+                        .downcast_or_throw::<JsBuffer, _>(&mut cx)?;
+
+                    let jsbuffer_signature: Handle<JsBuffer> = jsbuffer_signature.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
+                    let slice_signature: &[u8] = cx.borrow(&jsbuffer_signature, |data: neon::borrow::Ref<neon::types::BinaryData>| {
+                        data.as_slice::<u8>()
+                    });
+                    let signature: [u8; 64] = slice_signature.try_into().unwrap();
+
+
+                    // The signature unlock block needs to sign the hash of the entire transaction essence of the
+                    // transaction payload
+                    let signature: Box<[u8; 64]> = Box::new(signature);
+                    unlock_blocks.push(UnlockBlock::Signature(SignatureUnlock::Ed25519(Ed25519Signature::new(
+                        public_key, *signature,
+                    ))));
+                    signature_indexes.insert(index, current_block_index);
+                }
+            }
+    
+            let unlock_blocks = UnlockBlocks::new(unlock_blocks).unwrap();
+            let payload = TransactionPayloadBuilder::new()
+                .with_essence(essence)
+                .with_unlock_blocks(unlock_blocks)
+                .finish()
+                .unwrap();
+            
             let cb = cx.argument::<JsFunction>(cx.len()-1)?;
-            //let external_signer: Option<RefCell<Box<dyn ExternalSigner>>> = None;
             {
                 let this = cx.this();
                 let guard = cx.lock();
                 let ref_ = &(*this.borrow(&guard));
                 let client_task = ClientTask {
                     client_id: ref_.client_id.clone(),
-                    api: Api::ExternalSignTransaction {
-                        transaction_data,
-                        external_signer,
-                        inputs_range,
+                    api: Api::FinishExternalSignTransaction {
+                        payload: Payload::Transaction(Box::new(payload)),
                     },
                 };
                 client_task.schedule(cb);
-            }
+            }            
 
             Ok(cx.undefined().upcast())
+
+            //Ok(Payload::Transaction(Box::new(payload)))
+            /*
+
+            let object: Handle<JsObject> = cx.argument::<JsObject>(0)?;
+            let sign: Handle<JsValue> = object.get(&mut cx, "sign").unwrap();
+            let function: Handle<JsFunction> = sign.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+            //let message: Handle<JsArray> = cx.empty_array();
+            let message = cx.buffer(3)?;
+            let n = cx.number(3 as u8);
+            message.set(&mut cx, 0, n)?;
+            message.set(&mut cx, 1, n)?;
+            message.set(&mut cx, 2, n)?;
+        
+            let signResult: Handle<JsValue> = function.call(&mut cx, object, vec![message])?;
+            let array: Handle<JsArray> = signResult.downcast_or_throw::<JsArray, _>(&mut cx)?;
+            let vec: Vec<Handle<JsValue>> = array.to_vec(&mut cx)?;
+            let slice: &mut [u8; 32] = &mut [0 as u8;32];
+            for (i, jsValue) in vec.iter().enumerate() {
+                let jsByte: Handle<JsNumber> = jsValue.downcast_or_throw::<JsNumber, _>(&mut cx)?;
+                let byte: u8 = jsByte.value(&mut cx) as u8;
+                slice[i] = byte + 1;
+            }
+        
+            Ok(array)
+
+            */
         }
 
         method finishMessage(mut cx){
