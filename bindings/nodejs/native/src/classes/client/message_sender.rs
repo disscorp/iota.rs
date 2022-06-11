@@ -295,17 +295,6 @@ declare_types! {
             let mut signature_indexes = HashMap::<String, usize>::new();
             address_index_recorders.sort_by(|a, b| a.input.cmp(&b.input));
 
-            let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1)?;
-
-            let jsvalue_publickey: Handle<JsValue> = external_signer.get(&mut cx, "public_key").unwrap();
-            let jsfn_publickey: Handle<JsFunction> = jsvalue_publickey.downcast_or_throw::<JsFunction, _>(&mut cx)?;
-            let jsvalue_publickey: Handle<JsValue> = jsfn_publickey.call::<CallContext<_>, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut cx, external_signer, vec![])?;
-            let jsbuffer_publickey: Handle<JsBuffer> = jsvalue_publickey.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
-            let slice_publickey: &[u8] = cx.borrow(&jsbuffer_publickey, |data: neon::borrow::Ref<neon::types::BinaryData>| {
-                data.as_slice::<u8>()
-            });
-            let public_key: [u8; 32] = slice_publickey.try_into().unwrap();
-
             for (current_block_index, mut recorder) in address_index_recorders.into_iter().enumerate() {
                 // Check if current path is same as previous path
                 // If so, add a reference unlock block
@@ -370,6 +359,14 @@ declare_types! {
                     });
                     let signature: [u8; 64] = slice_signature.try_into().unwrap();
 
+                    let jsvalue_publickey: Handle<JsValue> = external_signer.get(&mut cx, "public_key").unwrap();
+                    let jsfn_publickey: Handle<JsFunction> = jsvalue_publickey.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                    let jsvalue_publickey: Handle<JsValue> = jsfn_publickey.call::<CallContext<_>, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut cx, external_signer, vec![])?;
+                    let jsbuffer_publickey: Handle<JsBuffer> = jsvalue_publickey.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
+                    let slice_publickey: &[u8] = cx.borrow(&jsbuffer_publickey, |data: neon::borrow::Ref<neon::types::BinaryData>| {
+                        data.as_slice::<u8>()
+                    });
+                    let public_key: [u8; 32] = slice_publickey.try_into().unwrap();
 
                     // The signature unlock block needs to sign the hash of the entire transaction essence of the
                     // transaction payload
