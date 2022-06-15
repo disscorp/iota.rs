@@ -577,7 +577,7 @@ impl<'a> ClientMessageBuilder<'a> {
         &self,
         prepared_transaction_data: PreparedTransactionData,
         seed: Option<&'a Seed>,
-        inputs_range: Option<Range<usize>>,
+        inputs_range: Option<Range<usize>>
     ) -> Result<Payload> {
         let essence = prepared_transaction_data.essence;
         let mut address_index_recorders = prepared_transaction_data.address_index_recorders;

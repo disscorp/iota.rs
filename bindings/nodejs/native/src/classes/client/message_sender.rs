@@ -269,121 +269,61 @@ declare_types! {
             let transaction_data_string = cx.argument::<JsString>(0)?.value();
             let transaction_data: PreparedTransactionData = serde_json::from_str(&transaction_data_string).expect("invalid prepared transaction data");
 
-            let inputs_range = if cx.len() > 4 {
-                let start: Option<usize> = match cx.argument_opt(2) {
-                    Some(arg) => {
-                        Some(arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as usize)
-                    },
-                    None => None,
-                };
-                let end: Option<usize> = match cx.argument_opt(3) {
-                    Some(arg) => {
-                        Some(arg.downcast::<JsNumber>().or_throw(&mut cx)?.value() as usize)
-                    },
-                    None => None,
-                };
-                if start.is_some() && end.is_some() {
-                    //save to unwrap since we checked if they are some
-                    Some(start.expect("no start index")..end.expect("no end index"))
-                }else{None}
-            }else{None};
-
             let essence = transaction_data.essence;
-            let mut address_index_recorders = transaction_data.address_index_recorders;
+            //let mut address_index_recorders = transaction_data.address_index_recorders;
             let hashed_essence = essence.hash();
-            let mut unlock_blocks = Vec::new();
-            let mut signature_indexes = HashMap::<String, usize>::new();
-            address_index_recorders.sort_by(|a, b| a.input.cmp(&b.input));
+            //let mut signature_indexes = HashMap::<String, usize>::new();
+            //address_index_recorders.sort_by(|a, b| a.input.cmp(&b.input));
 
-            for (current_block_index, mut recorder) in address_index_recorders.into_iter().enumerate() {
-                // Check if current path is same as previous path
-                // If so, add a reference unlock block
-                // Format to differentiate between public and internal addresses
-                let index = format!("{}{}", recorder.address_index, recorder.internal);
-                if let Some(block_index) = signature_indexes.get(&index) {
-                    unlock_blocks.push(UnlockBlock::Reference(ReferenceUnlock::new(*block_index as u16).unwrap()));
-                } else {
-                    // If not, we need to create a signature unlock block
-                    let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1)?;
-                    let jsvalue_derive: Handle<JsValue> = external_signer.get(&mut cx, "derive").unwrap();
-                    let jsfn_derive: Handle<JsFunction> = jsvalue_derive.downcast_or_throw::<JsFunction, _>(&mut cx)?;
-                    let jsarray_chain: Handle<JsArray> = cx.empty_array();
+            // Check if current path is same as previous path
+            // If so, add a reference unlock block
+            // Format to differentiate between public and internal addresses
+            //let index = format!("{}{}", recorder.address_index, recorder.internal);
+            //if let Some(block_index) = signature_indexes.get(&index) {
+                //unlock_blocks.push(UnlockBlock::Reference(ReferenceUnlock::new(*block_index as u16).unwrap()));
+            //} else {
+                // If not, we need to create a signature unlock block
+                let external_signer: Handle<JsObject> = cx.argument::<JsObject>(1)?;
 
-                    let mut i = 0;
-                    for segment in &recorder.chain.segments() {
-                        let bs = segment.bs();
-                        let uint8_ctor = cx.global()
-                            .get(&mut cx, "Uint8Array")?
-                            .downcast_or_throw::<JsFunction, _>(&mut cx)?;
-                    
-                        let mut buf = cx.array_buffer(bs.len().try_into().unwrap())?;
-                    
-                        cx.borrow_mut(&mut buf, |buf| {
-                            buf.as_mut_slice::<u8>().copy_from_slice(&bs);
-                        });
-                    
-                        let jsobject_bs: Handle<JsObject> = uint8_ctor.construct(&mut cx, [buf])?;
-                        let jsbool_hardened: Handle<JsBoolean> = cx.boolean(segment.hardened());
+                let jsvalue_sign: Handle<JsValue> = external_signer.get(&mut cx, "sign").unwrap();
+                let jsfn_sign: Handle<JsFunction> = jsvalue_sign.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                
+                let uint8_ctor = cx.global()
+                    .get(&mut cx, "Uint8Array")?
+                    .downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                let mut buf = cx.array_buffer(hashed_essence.len().try_into().unwrap())?;
+                cx.borrow_mut(&mut buf, |buf| {
+                    buf.as_mut_slice::<u8>().copy_from_slice(&hashed_essence);
+                });
+                let jsobject_hashedessence: Handle<JsObject> = uint8_ctor.construct(&mut cx, [buf])?;
 
-                        let jsobject_segment: Handle<JsObject> = cx.empty_object();
-                        jsobject_segment.set(&mut cx, "hardened", jsbool_hardened)?;
-                        jsobject_segment.set(&mut cx, "bs", jsobject_bs)?;
+                let jsbuffer_signature: Handle<JsBuffer> = jsfn_sign.call(&mut cx, external_signer, vec!(jsobject_hashedessence))?
+                    .downcast_or_throw::<JsBuffer, _>(&mut cx)?;
 
-                        jsarray_chain.set(&mut cx, i, jsobject_segment)?;
+                let jsbuffer_signature: Handle<JsBuffer> = jsbuffer_signature.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
+                let slice_signature: &[u8] = cx.borrow(&jsbuffer_signature, |data: neon::borrow::Ref<neon::types::BinaryData>| {
+                    data.as_slice::<u8>()
+                });
+                let signature: [u8; 64] = slice_signature.try_into().unwrap();
 
-                        i = i + 1;
-                    }
+                let jsvalue_publickey: Handle<JsValue> = external_signer.get(&mut cx, "getPublicKey").unwrap();
+                let jsfn_publickey: Handle<JsFunction> = jsvalue_publickey.downcast_or_throw::<JsFunction, _>(&mut cx)?;
+                let jsvalue_publickey: Handle<JsValue> = jsfn_publickey.call::<CallContext<_>, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut cx, external_signer, vec![])?;
+                let jsbuffer_publickey: Handle<JsBuffer> = jsvalue_publickey.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
+                let slice_publickey: &[u8] = cx.borrow(&jsbuffer_publickey, |data: neon::borrow::Ref<neon::types::BinaryData>| {
+                    data.as_slice::<u8>()
+                });
+                let public_key: [u8; 32] = slice_publickey.try_into().unwrap();
 
-                    let external_signer: Handle<JsObject> = jsfn_derive.call(&mut cx, external_signer, vec!(jsarray_chain))?
-                        .downcast_or_throw::<JsObject, _>(&mut cx)?;
-
-
-                    let jsvalue_sign: Handle<JsValue> = external_signer.get(&mut cx, "sign").unwrap();
-                    let jsfn_sign: Handle<JsFunction> = jsvalue_sign.downcast_or_throw::<JsFunction, _>(&mut cx)?;
-                    
-                    let uint8_ctor = cx.global()
-                        .get(&mut cx, "Uint8Array")?
-                        .downcast_or_throw::<JsFunction, _>(&mut cx)?;
-                    let mut buf = cx.array_buffer(hashed_essence.len().try_into().unwrap())?;
-                    cx.borrow_mut(&mut buf, |buf| {
-                        buf.as_mut_slice::<u8>().copy_from_slice(&hashed_essence);
-                    });
-                    let jsobject_hashedessence: Handle<JsObject> = uint8_ctor.construct(&mut cx, [buf])?;
-
-                    let jsbuffer_signature: Handle<JsBuffer> = jsfn_sign.call(&mut cx, external_signer, vec!(jsobject_hashedessence))?
-                        .downcast_or_throw::<JsBuffer, _>(&mut cx)?;
-
-                    let jsbuffer_signature: Handle<JsBuffer> = jsbuffer_signature.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
-                    let slice_signature: &[u8] = cx.borrow(&jsbuffer_signature, |data: neon::borrow::Ref<neon::types::BinaryData>| {
-                        data.as_slice::<u8>()
-                    });
-                    let signature: [u8; 64] = slice_signature.try_into().unwrap();
-
-                    let jsvalue_publickey: Handle<JsValue> = external_signer.get(&mut cx, "public_key").unwrap();
-                    let jsfn_publickey: Handle<JsFunction> = jsvalue_publickey.downcast_or_throw::<JsFunction, _>(&mut cx)?;
-                    let jsvalue_publickey: Handle<JsValue> = jsfn_publickey.call::<CallContext<_>, JsObject, JsObject, Vec<Handle<JsObject>>>(&mut cx, external_signer, vec![])?;
-                    let jsbuffer_publickey: Handle<JsBuffer> = jsvalue_publickey.downcast_or_throw::<JsBuffer, _>(&mut cx)?;
-                    let slice_publickey: &[u8] = cx.borrow(&jsbuffer_publickey, |data: neon::borrow::Ref<neon::types::BinaryData>| {
-                        data.as_slice::<u8>()
-                    });
-                    let public_key: [u8; 32] = slice_publickey.try_into().unwrap();
-
-                    // The signature unlock block needs to sign the hash of the entire transaction essence of the
-                    // transaction payload
-                    let signature: Box<[u8; 64]> = Box::new(signature);
-                    unlock_blocks.push(UnlockBlock::Signature(SignatureUnlock::Ed25519(Ed25519Signature::new(
-                        public_key, *signature,
-                    ))));
-                    signature_indexes.insert(index, current_block_index);
-                }
-            }
+                // The signature unlock block needs to sign the hash of the entire transaction essence of the
+                // transaction payload
+                let signature: Box<[u8; 64]> = Box::new(signature);
+                //signature_indexes.insert(index, current_block_index);
+            //}
     
-            let unlock_blocks = UnlockBlocks::new(unlock_blocks).unwrap();
-            let payload = TransactionPayloadBuilder::new()
-                .with_essence(essence)
-                .with_unlock_blocks(unlock_blocks)
-                .finish()
-                .unwrap();
+            let unlock_block = UnlockBlock::Signature(SignatureUnlock::Ed25519(Ed25519Signature::new(
+                public_key, *signature,
+            )));
             
             let cb = cx.argument::<JsFunction>(cx.len()-1)?;
             {
@@ -393,7 +333,7 @@ declare_types! {
                 let client_task = ClientTask {
                     client_id: ref_.client_id.clone(),
                     api: Api::FinishExternalSignTransaction {
-                        payload: Payload::Transaction(Box::new(payload)),
+                        unlock_block,
                     },
                 };
                 client_task.schedule(cb);

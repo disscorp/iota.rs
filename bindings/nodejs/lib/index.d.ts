@@ -46,22 +46,24 @@ export declare class ClientBuilder {
   build(): Client
 }
 
-export declare interface ExternalSigner<T> {
+export declare interface ExternalSigner {
+  
   key: Uint8Array;
+
   /// Gets ed25519 public key
-  public_key(): Uint8Array;
+  getPublicKey(): Uint8Array;
 
   /// Signs with ed25519 private key
   sign(message: Uint8Array): Uint8Array;
 
-  /// Derives key
-  derive(chain: Chain): T;
 }
+/*
 type Chain = Array<Segment>;
+
 type Segment = {
   hardened: boolean,
   bs: Uint8Array
-};
+};*/
 
 export declare class MessageSender {
   seed(seed: string): MessageSender
@@ -76,7 +78,7 @@ export declare class MessageSender {
   dustAllowanceOutput(address: string, value: number): MessageSender
   prepareTransaction(): Promise<PreparedTransactionData>
   signTransaction(preparedTransactionData: PreparedTransactionData, seed: string, startIndex?: number, endIndex?: number): Promise<TransactionPayload>
-  externalSignTransaction(preparedTransactionData: PreparedTransactionData, external_signer: ExternalSigner, startIndex?: number, endIndex?: number): Promise<TransactionPayload>
+  externalSignTransaction(preparedTransactionData: PreparedTransactionData, external_signer: ExternalSigner, startIndex?: number, endIndex?: number): Promise<UnlockBlock>
   finishMessage(payload: Payload): Promise<MessageWrapper>
   submit(): Promise<MessageWrapper>
 }

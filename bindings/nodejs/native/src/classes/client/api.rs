@@ -8,7 +8,7 @@ use super::MessageDto;
 use crate::classes::client::dto::{AddressBalanceDto, MessageWrapper, OutputMetadataDto};
 use iota_client::{
     api::PreparedTransactionData,
-    bee_message::prelude::{Address, MessageBuilder, MessageId, Parents, Payload, TransactionId, UtxoInput},
+    bee_message::prelude::{Address, MessageBuilder, MessageId, Parents, Payload, TransactionId, UtxoInput, UnlockBlock},
     bee_rest_api::types::dtos::{AddressDto, MessageDto as BeeMessageDto, OutputDto as BeeOutput},
     common::packable::Packable,
     AddressOutputsOptions, ClientMiner, Seed,
@@ -47,7 +47,7 @@ pub(crate) enum Api {
         inputs_range: Option<Range<usize>>,
     },
     FinishExternalSignTransaction {
-        payload: Payload
+        unlock_block: UnlockBlock
     },
     FinishMessage {
         payload: Payload,
@@ -246,8 +246,8 @@ impl Task for ClientTask {
                         message: BeeMessageDto::from(&message),
                     })?
                 }
-                Api::FinishExternalSignTransaction { payload } => {
-                    serde_json::to_string(&payload)?
+                Api::FinishExternalSignTransaction { unlock_block } => {
+                    serde_json::to_string(&unlock_block)?
                 }
                 Api::GetUnspentAddress {
                     seed,
