@@ -13,7 +13,8 @@ import {
   MessageWrapper,
   Payload,
   TransactionPayload,
-  PreparedTransactionData
+  PreparedTransactionData,
+  UnlockBlock
 } from './types'
 
 export declare type Api = 'GetHealth' | 'GetInfo' | 'GetTips' | 'PostMessage' | 'PostMessageWithRemotePoW' | 'GetOutput' | 'GetMilestone'
@@ -47,8 +48,6 @@ export declare class ClientBuilder {
 }
 
 export declare interface ExternalSigner {
-  
-  key: Uint8Array;
 
   /// Gets ed25519 public key
   getPublicKey(): Uint8Array;
@@ -78,7 +77,7 @@ export declare class MessageSender {
   dustAllowanceOutput(address: string, value: number): MessageSender
   prepareTransaction(): Promise<PreparedTransactionData>
   signTransaction(preparedTransactionData: PreparedTransactionData, seed: string, startIndex?: number, endIndex?: number): Promise<TransactionPayload>
-  externalSignTransaction(preparedTransactionData: PreparedTransactionData, external_signer: ExternalSigner, startIndex?: number, endIndex?: number): Promise<UnlockBlock>
+  externalSignTransaction(preparedTransactionData: PreparedTransactionData, external_signer: ExternalSigner): Promise<UnlockBlock>
   finishMessage(payload: Payload): Promise<MessageWrapper>
   submit(): Promise<MessageWrapper>
 }

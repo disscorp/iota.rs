@@ -161,10 +161,7 @@ MessageSender.prototype.signTransaction = function (preparedTransactionData, see
   return promisify(signTransactionFn).apply(this, [JSON.stringify(preparedTransactionData), seed])
 }
 const externalSignTransactionFn = MessageSender.prototype.externalSignTransaction
-MessageSender.prototype.externalSignTransaction = function (preparedTransactionData, external_signer, startIndex, endIndex) {
-  if (startIndex !== undefined && endIndex !== undefined) {
-    return promisify(externalSignTransactionFn).apply(this, [JSON.stringify(preparedTransactionData), external_signer, startIndex, endIndex])
-  }
+MessageSender.prototype.externalSignTransaction = function (preparedTransactionData, external_signer) {
   return promisify(externalSignTransactionFn).apply(this, [JSON.stringify(preparedTransactionData), external_signer])
 }
 const finishMessageFn = MessageSender.prototype.finishMessage
