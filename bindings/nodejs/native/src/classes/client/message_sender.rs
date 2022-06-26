@@ -3,7 +3,7 @@
 
 use iota_client::{
     api::PreparedTransactionData,
-    bee_message::prelude::{Address, MessageId, Payload, UtxoInput, UnlockBlock, ReferenceUnlock, SignatureUnlock, Ed25519Signature, UnlockBlocks, TransactionPayloadBuilder},
+    bee_message::prelude::{Address, MessageId, Payload, UtxoInput, UnlockBlock, ReferenceUnlock, SignatureUnlock, Ed25519Signature, UnlockBlocks, TransactionPayloadBuilder, Essence, RegularEssence},
     Seed,
 };
 use neon::prelude::*;
@@ -266,10 +266,9 @@ declare_types! {
         }
 
         method externalSignTransaction(mut cx){
-            let transaction_data_string = cx.argument::<JsString>(0)?.value();
-            let transaction_data: PreparedTransactionData = serde_json::from_str(&transaction_data_string).expect("invalid prepared transaction data");
+            let essence_string = cx.argument::<JsString>(0)?.value();
+            let essence: Essence = serde_json::from_str(&essence_string).expect("invalid transaction data(essence)");
 
-            let essence = transaction_data.essence;
             //let mut address_index_recorders = transaction_data.address_index_recorders;
             let hashed_essence = essence.hash();
             //let mut signature_indexes = HashMap::<String, usize>::new();
